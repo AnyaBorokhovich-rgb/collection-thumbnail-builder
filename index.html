@@ -13,7 +13,7 @@ body{margin:0;background:var(--bg);color:var(--ink);
   font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif}
 .topbar{display:flex;align-items:center;justify-content:space-between;padding:14px 22px}
 .topbar h1{font-size:16px;margin:0;font-weight:650}
-.layout{display:grid;grid-template-columns:380px 1fr;gap:18px;padding:0 22px 90px;align-items:start}
+.layout{display:grid;grid-template-columns:380px 1fr;gap:18px;padding:0 22px 18px;align-items:start}
 .card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);
   box-shadow:0 1px 3px rgba(0,0,0,.04)}
 .controls{padding:22px}
@@ -42,7 +42,8 @@ select{width:100%;padding:9px 11px;border:1px solid var(--border);border-radius:
 .seg button{border:0;background:#fff;padding:7px 14px;font:inherit;cursor:pointer;color:var(--muted)}
 .seg button.sel{background:#f0f0f2;color:var(--ink);font-weight:600}
 .preview{padding:22px;display:flex;flex-direction:column;align-items:center;gap:14px;min-height:520px;
-  justify-content:center}
+  justify-content:center;position:sticky;top:16px;align-self:start}
+@media(max-width:820px){.preview{position:static}}
 .zoombar{display:flex;align-items:center;gap:10px;color:var(--muted)}
 .zoombar button{width:30px;height:30px;border:1px solid var(--border);background:#fff;border-radius:8px;
   font-size:16px;cursor:pointer}
@@ -122,9 +123,24 @@ select{width:100%;padding:9px 11px;border:1px solid var(--border);border-radius:
     <div class="selbar" id="selBar"></div>
   </div>
 </div>
+<div id="galleryCard" class="card" style="margin:0 22px 96px;padding:16px 22px">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;flex-wrap:wrap;gap:8px">
+    <strong style="font-size:14px">My thumbnails</strong>
+    <span style="font-size:13px;color:var(--muted)">
+      saved in this browser ·
+      <a id="openProj" style="color:var(--ring);cursor:pointer;text-decoration:underline">Open project file…</a> ·
+      <a id="saveProj" style="color:var(--ring);cursor:pointer;text-decoration:underline">Save project file</a>
+    </span>
+  </div>
+  <div id="gallery" style="display:flex;gap:14px;flex-wrap:wrap"></div>
+</div>
 <div class="actionbar">
   <span class="fname" id="fileNameLabel">thumbnail.png</span>
-  <button class="btn-primary" id="downloadBtn">Download PNG</button>
+  <div style="display:flex;gap:10px;align-items:center">
+    <button class="seg" id="newBtn" style="border-radius:10px;padding:10px 16px">New</button>
+    <button class="seg" id="saveBtn" style="border-radius:10px;padding:10px 16px">Save</button>
+    <button class="btn-primary" id="downloadBtn">Download PNG</button>
+  </div>
 </div>
 <div id="exportModal" class="hide" style="position:fixed;inset:0;background:rgba(0,0,0,.35);
   display:flex;align-items:center;justify-content:center;z-index:10">
@@ -453,13 +469,13 @@ function buildControls(){
   $('nameInput').oninput = e => { state.name = e.target.value; updateFilename(); };
 
   // Background swatches + upload
-  function renderBg(){
+  renderBg = function(){
     buildSwatches($('bgRow'), state.bgUpload ? null : state.background, id => {
       state.background = id; state.bgUpload = null; renderBg(); preloadAndRender();
     });
     $('bgRow').appendChild(uploadTile(url => { state.bgUpload = url; renderBg();
       measure(url).then(render); }));
-  }
+  };
   renderBg();
 
   // Main dropdown (+ upload option)
@@ -501,11 +517,11 @@ function buildControls(){
     render();
   };
   $('yearInput').oninput = e => { state.year = e.target.value; render(); };
-  function renderYearColors(){
+  renderYearColors = function(){
     buildSwatches($('yearColors'), state.yearColor, id => {
       state.yearColor = id; renderYearColors(); render();
     }, CONFIG.YEAR_PALETTE);
-  }
+  };
   renderYearColors();
 
   // Corner segmented control
@@ -542,6 +558,9 @@ function flagSelect(i){
 // Default flag size shrinks as you add more flags so they fit the top-right corner.
 const FLAG_SCALE_BY_COUNT = { 1:1, 2:1, 3:0.78, 4:0.62 };
 let refreshFlagSize = () => {};
+// Assigned inside buildControls so syncUI() can re-sync them after loading a design.
+let renderBg = () => {};
+let renderYearColors = () => {};
 function buildFlagsUI(){
   const w = $('flagsWrap'); w.innerHTML = '';
   const lbl = t => { const d=document.createElement('div'); d.style.cssText='color:var(--muted);font-size:13px;margin:10px 0 6px'; d.textContent=t; return d; };
@@ -585,7 +604,113 @@ function buildSymbolUI(){
   w.appendChild(uploadTile(url => { state.symbolUpload = url; render(); }));
 }
 
+/* ============================ SAVE / LOAD ============================ */
+// A "design" snapshot is the full editable state minus transient view fields.
+const SNAP_KEYS = ['name','background','bgUpload','main','mainUpload','secondaryOn','secondary','secUpload',
+  'docsOn','yearOn','year','yearColor','corner','flagCount','flags','flagFrontIsFirst','flagScale',
+  'flagUploads','symbolUpload','offsets','scales'];
+function snapshot(){ const o={}; SNAP_KEYS.forEach(k => o[k]=JSON.parse(JSON.stringify(state[k]))); return o; }
+function applySnapshot(s){ SNAP_KEYS.forEach(k => { if (k in s) state[k]=JSON.parse(JSON.stringify(s[k])); }); state.selected=null; }
+
+// Re-sync every control's visual state from `state` (used after loading a design).
+function syncUI(){
+  $('nameInput').value = state.name || ''; updateFilename();
+  renderBg();
+  $('mainSelect').value = state.main;
+  $('secToggle').classList.toggle('on', state.secondaryOn); $('secWrap').classList.toggle('hide', !state.secondaryOn);
+  $('secSelect').value = state.secondary;
+  $('docsToggle').classList.toggle('on', state.docsOn);
+  $('yearToggle').classList.toggle('on', state.yearOn); $('yearWrap').classList.toggle('hide', !state.yearOn);
+  $('yearInput').value = state.year || ''; renderYearColors();
+  document.querySelectorAll('#cornerSeg button').forEach(b => b.classList.toggle('sel', b.dataset.corner===state.corner));
+  $('flagsWrap').classList.toggle('hide', state.corner!=='flags');
+  $('symbolWrap').classList.toggle('hide', state.corner!=='symbol');
+  buildFlagsUI();
+  preloadAndRender();
+}
+
+// In-browser library (localStorage). Note: per-browser/per-device, not shared across teammates.
+const LS_KEY = 'ctb_designs';
+let currentDesignId = null;
+function loadDesigns(){ try { return JSON.parse(localStorage.getItem(LS_KEY)) || []; } catch(e){ return []; } }
+function persistDesigns(arr){
+  try { localStorage.setItem(LS_KEY, JSON.stringify(arr)); return true; }
+  catch(e){ alert('Could not save — this browser’s storage is full. Delete some saved thumbnails, or use "Save project file" instead.'); return false; }
+}
+async function saveCurrent(){
+  let name = (state.name || '').trim();
+  if (!name){ name = (prompt('Name this thumbnail:', 'Untitled') || '').trim(); if (!name) return; state.name = name; updateFilename(); }
+  const thumb = (await composeCanvas(96,96)).toDataURL('image/png');
+  const arr = loadDesigns();
+  const id = currentDesignId || ('d' + Date.now());
+  const entry = { id, name, savedAt: Date.now(), state: snapshot(), thumb };
+  const idx = arr.findIndex(d => d.id === id);
+  if (idx >= 0) arr[idx] = entry; else arr.unshift(entry);
+  if (persistDesigns(arr)){ currentDesignId = id; renderGallery(); }
+}
+function openDesign(id){
+  const d = loadDesigns().find(x => x.id === id); if (!d) return;
+  applySnapshot(d.state); currentDesignId = id; syncUI();
+  window.scrollTo({ top:0, behavior:'smooth' });
+}
+function deleteDesign(id){
+  if (!confirm('Delete this saved thumbnail?')) return;
+  persistDesigns(loadDesigns().filter(x => x.id !== id));
+  if (currentDesignId === id) currentDesignId = null;
+  renderGallery();
+}
+function newDesign(){
+  applySnapshot(snapshotDefaults()); currentDesignId = null; syncUI();
+}
+let _defaults = null;
+function snapshotDefaults(){ return JSON.parse(JSON.stringify(_defaults)); }
+
+function renderGallery(){
+  const g = $('gallery'); g.innerHTML = '';
+  const arr = loadDesigns();
+  if (!arr.length){ g.innerHTML = '<span style="color:var(--muted);font-size:13px">No saved thumbnails yet — build one and click <b>Save</b>.</span>'; return; }
+  arr.forEach(d => {
+    const card = document.createElement('div');
+    card.style.cssText = 'width:96px;text-align:center;cursor:pointer';
+    card.title = 'Open "' + d.name + '"';
+    card.innerHTML =
+      '<img src="'+d.thumb+'" style="width:88px;height:88px;border:1px solid var(--border);border-radius:10px;'
+      + 'background:repeating-conic-gradient(#eee 0 25%,#fff 0 50%) 0/12px 12px">'
+      + '<div style="font-size:12px;margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+ (d.name||'Untitled') +'</div>'
+      + '<a style="font-size:11px;color:var(--muted);text-decoration:underline">delete</a>';
+    card.onclick = () => openDesign(d.id);
+    card.querySelector('a').onclick = (ev) => { ev.stopPropagation(); deleteDesign(d.id); };
+    g.appendChild(card);
+  });
+}
+
+// Portable project files (work across computers / can live in a shared folder).
+function saveProjectFile(){
+  const data = { app:'collection-thumbnail-builder', v:1, name: state.name || 'Untitled', state: snapshot() };
+  const blob = new Blob([JSON.stringify(data)], { type:'application/json' });
+  const a = document.createElement('a');
+  a.download = (TB.sanitizeFilename(state.name).replace(/\.png$/, '') || 'thumbnail') + '.thumbproj.json';
+  a.href = URL.createObjectURL(blob); document.body.appendChild(a); a.click(); a.remove();
+}
+function openProjectFile(){
+  const inp = document.createElement('input'); inp.type='file'; inp.accept='.json,application/json';
+  inp.onchange = e => {
+    const f = e.target.files[0]; if (!f) return;
+    const fr = new FileReader();
+    fr.onload = () => { try { const d = JSON.parse(fr.result); if (d && d.state){ applySnapshot(d.state); currentDesignId = null; syncUI(); } else alert('That file is not a thumbnail project.'); }
+      catch(err){ alert('Could not open project file.'); } };
+    fr.readAsText(f);
+  };
+  inp.click();
+}
+
 buildControls(); updateFilename();
+_defaults = snapshot();                 // capture default state for "New"
+$('saveBtn').onclick = saveCurrent;
+$('newBtn').onclick = newDesign;
+$('saveProj').onclick = saveProjectFile;
+$('openProj').onclick = openProjectFile;
+renderGallery();
 
 /* ============================ INTERACTIONS ============================ */
 function layerLabel(key){
@@ -684,7 +809,8 @@ function loadImage(url){
   });
 }
 
-async function exportPNG(W, H){
+// Compose the current design onto an off-screen transparent canvas at W×H and return it.
+async function composeCanvas(W, H){
   const B = CONFIG.BASE_SIZE;
   const canvas = document.createElement('canvas'); canvas.width = W; canvas.height = H;
   const ctx = canvas.getContext('2d');
@@ -709,6 +835,11 @@ async function exportPNG(W, H){
       if ('letterSpacing' in ctx) ctx.letterSpacing = '0px';
     }
   }
+  return canvas;
+}
+
+async function exportPNG(W, H){
+  const canvas = await composeCanvas(W, H);
   const a = document.createElement('a');
   a.download = TB.sanitizeFilename(state.name);
   a.href = canvas.toDataURL('image/png');
