@@ -135,7 +135,7 @@ input[type=text]:focus,select:focus{outline:none;border-color:var(--accent);
       <div class="swatches" id="bgRow"></div>
     </div>
     <div class="group">
-      <label class="h" for="mainSelect">Main image</label>
+      <label class="h" for="mainSelect">Collection</label>
       <select id="mainSelect"></select>
     </div>
     <div class="group">
@@ -144,7 +144,7 @@ input[type=text]:focus,select:focus{outline:none;border-color:var(--accent);
       <div id="secWrap" class="hide" style="margin-top:10px"><select id="secSelect"></select></div>
     </div>
     <div class="group">
-      <div class="row"><label class="h" style="margin:0">Attached documentation</label>
+      <div class="row"><label class="h" style="margin:0">Attach sample record</label>
         <div class="toggle" id="docsToggle"><div class="knob"></div></div></div>
       <div id="docsWrap" class="hide" style="margin-top:10px">
         <div style="color:var(--muted);font-size:12px;margin-bottom:8px">Shown top-left (27×27). Upload the real document — any size is fit into the square.</div>
@@ -1066,7 +1066,7 @@ renderGallery();
 /* ============================ INTERACTIONS ============================ */
 function layerLabel(key){
   if (key && key.indexOf('flag') === 0) return 'Flag';
-  return ({background:'Background',main:'Main image',docs:'Attached docs',year:'Year tag',secondary:'Secondary image',symbol:'Symbol'})[key] || key;
+  return ({background:'Background',main:'Collection',docs:'Sample record',year:'Year tag',secondary:'Secondary image',symbol:'Symbol'})[key] || key;
 }
 const clamp = (v,lo,hi) => Math.max(lo, Math.min(hi, v));
 function updateSelBar(){
