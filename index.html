@@ -34,7 +34,7 @@ body{margin:0;color:var(--ink);
    radial-gradient(circle 4px at 23px 11px, #F6D9CC 96%, transparent 0),
    radial-gradient(circle 4px at 11px 23px, #F3DFA6 96%, transparent 0),
    radial-gradient(circle 4px at 23px 23px, #CFE6D2 96%, transparent 0)}
-.layout{display:grid;grid-template-columns:380px 1fr;gap:22px;padding:8px 26px 24px;align-items:start}
+.layout{display:grid;grid-template-columns:380px 1fr;gap:22px;padding:8px 26px 24px;align-items:stretch}
 .card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow-card)}
 /* Left panel: a transparent column of individually floating control tiles */
 .controls{padding:0;background:transparent;border:0;box-shadow:none;display:flex;flex-direction:column;gap:14px}
@@ -71,11 +71,10 @@ input[type=text]:focus,select:focus{outline:none;border-color:var(--accent);
   padding:10px 16px;font:inherit;cursor:pointer;color:var(--ink);box-shadow:var(--shadow-soft)}
 /* Right panel: a clean white canvas with a fine dotted weave texture; the artboard floats on it */
 .preview{position:relative;padding:28px;display:flex;flex-direction:column;align-items:center;gap:18px;
-  min-height:540px;justify-content:center;top:16px;align-self:start;overflow:hidden;
+  min-height:540px;justify-content:center;align-self:stretch;overflow:hidden;
   background:
     radial-gradient(rgba(40,36,30,.085) 1px, transparent 1.5px) 0 0/17px 17px,
     radial-gradient(125% 100% at 50% 28%, #ffffff, #f6f4f0 100%)}
-.preview{position:sticky}
 .preview::before{content:"";position:absolute;inset:0;background-image:var(--grain);
   background-size:180px 180px;opacity:.05;mix-blend-mode:multiply;pointer-events:none}
 .preview>*{position:relative;z-index:1}
@@ -108,6 +107,11 @@ input[type=text]:focus,select:focus{outline:none;border-color:var(--accent);
 .btn-primary{background:var(--accent);color:#fff;border:0;border-radius:var(--radius-sm);
   padding:11px 22px;font:inherit;font-weight:600;cursor:pointer;box-shadow:0 8px 18px rgba(124,92,255,.32)}
 .btn-primary:hover{filter:brightness(1.06)}
+/* Save confirmation toast with Undo */
+#saveToast{position:fixed;left:50%;bottom:74px;transform:translateX(-50%);z-index:30;
+  background:#2a2520;color:#fff;padding:10px 18px;border-radius:999px;box-shadow:var(--shadow-float);
+  display:flex;align-items:center;gap:14px;font-size:13px}
+#saveToast a{color:#f3dfa6;cursor:pointer;text-decoration:underline;font-weight:600}
 /* Soft drop-shadow under each flag so overlapping flags separate cleanly */
 #stage .layer.flag-layer img{filter:drop-shadow(.5px .8px 1px rgba(30,22,12,.38))}
 /* Searchable country picker (typeahead) */
@@ -159,7 +163,7 @@ input[type=text]:focus,select:focus{outline:none;border-color:var(--accent);
       </div>
     </div>
     <div class="group">
-      <label class="h">Top-right corner</label>
+      <label class="h">Flags/Symbols</label>
       <div class="seg" id="cornerSeg">
         <button data-corner="none" class="sel">None</button>
         <button data-corner="flags">Flags</button>
@@ -192,10 +196,11 @@ input[type=text]:focus,select:focus{outline:none;border-color:var(--accent);
   <span class="fname" id="fileNameLabel">thumbnail.png</span>
   <div style="display:flex;gap:10px;align-items:center">
     <button class="btn-soft" id="newBtn">New</button>
-    <button class="btn-soft" id="saveBtn">Save</button>
+    <span id="saveArea" style="display:inline-flex;gap:10px;align-items:center"></span>
     <button class="btn-primary" id="downloadBtn">Download PNG</button>
   </div>
 </div>
+<div id="saveToast" class="hide"><span id="saveToastMsg">Saved</span><a id="saveUndo">Undo</a></div>
 <div id="exportModal" class="hide" style="position:fixed;inset:0;background:rgba(0,0,0,.35);
   display:flex;align-items:center;justify-content:center;z-index:10">
   <div class="card" style="padding:22px;width:360px">
@@ -977,6 +982,7 @@ function syncUI(){
   $('symbolWrap').classList.toggle('hide', state.corner!=='symbol');
   applyFlagSizeForCount();        // size follows count, even for older saved designs
   buildFlagsUI();
+  if (typeof renderSaveArea === 'function') renderSaveArea();   // Save vs Rewrite/Save-as-new
   preloadAndRender();
 }
 
@@ -988,30 +994,87 @@ function persistDesigns(arr){
   try { localStorage.setItem(LS_KEY, JSON.stringify(arr)); return true; }
   catch(e){ alert('Could not save — this browser’s storage is full. Delete some saved thumbnails, or use "Save project file" instead.'); return false; }
 }
-async function saveCurrent(){
+let lastSave = null;   // { mode, id, prevEntry, prevCurrentId } — powers the Undo action
+
+async function ensureName(){
   let name = (state.name || '').trim();
-  if (!name){ name = (prompt('Name this thumbnail:', 'Untitled') || '').trim(); if (!name) return; state.name = name; updateFilename(); }
+  if (!name){ name = (prompt('Name this thumbnail:', 'Untitled') || '').trim(); if (!name) return null; state.name = name; updateFilename(); }
+  return name;
+}
+// mode: 'new' (fresh item) | 'rewrite' (overwrite the loaded design) | 'saveAsNew'
+async function doSave(mode){
+  const name = await ensureName(); if (name === null) return;
   const thumb = (await composeCanvas(96,96)).toDataURL('image/png');
   const arr = loadDesigns();
-  const id = currentDesignId || ('d' + Date.now());
-  const entry = { id, name, savedAt: Date.now(), state: snapshot(), thumb };
-  const idx = arr.findIndex(d => d.id === id);
-  if (idx >= 0) arr[idx] = entry; else arr.unshift(entry);
-  if (persistDesigns(arr)){ currentDesignId = id; renderGallery(); }
+  const prevCurrentId = currentDesignId;
+  let id, prevEntry = null;
+  if (mode === 'rewrite' && currentDesignId){
+    id = currentDesignId;
+    const idx = arr.findIndex(d => d.id === id);
+    prevEntry = idx >= 0 ? JSON.parse(JSON.stringify(arr[idx])) : null;
+    const entry = { id, name, savedAt: Date.now(), state: snapshot(), thumb };
+    if (idx >= 0) arr[idx] = entry; else arr.unshift(entry);
+  } else {
+    id = 'd' + Date.now();
+    arr.unshift({ id, name, savedAt: Date.now(), state: snapshot(), thumb });
+  }
+  if (persistDesigns(arr)){
+    currentDesignId = id;
+    lastSave = { mode, id, prevEntry, prevCurrentId };
+    renderGallery(); renderSaveArea();
+    showSaveToast(mode === 'rewrite' ? 'Updated “' + name + '”' : 'Saved “' + name + '”');
+  }
 }
+// Undo reverses the last save action: removes a just-created entry, or restores an overwritten one.
+function undoLastSave(){
+  if (!lastSave) return;
+  let arr = loadDesigns();
+  if (lastSave.mode === 'rewrite'){
+    const idx = arr.findIndex(d => d.id === lastSave.id);
+    if (lastSave.prevEntry){ if (idx >= 0) arr[idx] = lastSave.prevEntry; else arr.unshift(lastSave.prevEntry); }
+    else arr = arr.filter(d => d.id !== lastSave.id);
+  } else {
+    arr = arr.filter(d => d.id !== lastSave.id);
+  }
+  persistDesigns(arr);
+  currentDesignId = lastSave.prevCurrentId;
+  lastSave = null;
+  renderGallery(); renderSaveArea(); hideSaveToast();
+}
+// New item → single "Save". Loaded-from-gallery item → "Rewrite" + "Save as new".
+function renderSaveArea(){
+  const a = $('saveArea'); if (!a) return; a.innerHTML = '';
+  const mk = (txt, fn) => { const b = document.createElement('button'); b.className = 'btn-soft'; b.textContent = txt; b.onclick = fn; return b; };
+  if (currentDesignId){
+    a.appendChild(mk('Rewrite', () => doSave('rewrite')));
+    a.appendChild(mk('Save as new', () => doSave('saveAsNew')));
+  } else {
+    a.appendChild(mk('Save', () => doSave('new')));
+  }
+}
+let _toastTimer = null;
+function showSaveToast(msg){
+  const t = $('saveToast'); if (!t) return;
+  $('saveToastMsg').textContent = msg;
+  t.classList.remove('hide');
+  clearTimeout(_toastTimer); _toastTimer = setTimeout(hideSaveToast, 9000);
+}
+function hideSaveToast(){ const t = $('saveToast'); if (t) t.classList.add('hide'); clearTimeout(_toastTimer); }
+
 function openDesign(id){
   const d = loadDesigns().find(x => x.id === id); if (!d) return;
-  applySnapshot(d.state); currentDesignId = id; syncUI();
+  applySnapshot(d.state); currentDesignId = id; lastSave = null; hideSaveToast(); syncUI();
   window.scrollTo({ top:0, behavior:'smooth' });
 }
 function deleteDesign(id){
   if (!confirm('Delete this saved thumbnail?')) return;
   persistDesigns(loadDesigns().filter(x => x.id !== id));
   if (currentDesignId === id) currentDesignId = null;
-  renderGallery();
+  if (lastSave && lastSave.id === id){ lastSave = null; hideSaveToast(); }
+  renderGallery(); renderSaveArea();
 }
 function newDesign(){
-  applySnapshot(snapshotDefaults()); currentDesignId = null; syncUI();
+  applySnapshot(snapshotDefaults()); currentDesignId = null; lastSave = null; hideSaveToast(); syncUI();
 }
 let _defaults = null;
 function snapshotDefaults(){ return JSON.parse(JSON.stringify(_defaults)); }
@@ -1057,7 +1120,8 @@ function openProjectFile(){
 
 buildControls(); updateFilename();
 _defaults = snapshot();                 // capture default state for "New"
-$('saveBtn').onclick = saveCurrent;
+$('saveUndo').onclick = undoLastSave;
+renderSaveArea();
 $('newBtn').onclick = newDesign;
 $('saveProj').onclick = saveProjectFile;
 $('openProj').onclick = openProjectFile;
