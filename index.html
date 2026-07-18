@@ -296,7 +296,7 @@ const CONFIG = {
   // Default geometry in 96x96 space. Backgrounds/main are centered at render time using their natural size.
   LAYOUT: {
     year:      { x: 7.4,  y: 68.6, w: 28.2, h: 15.0 },
-    secondary: { x: 53,   y: 52,   w: 32,   h: 32 },   // bottom-right badge; aspect preserved via contain
+    secondary: { x: 50,   y: 50,   w: 46,   h: 46 },   // badge frame flush to the main image's bottom-right corner (96,96)
     flag:      { x: 64.1, y: 8.6,  w: 21.0, h: 13.3 },
     flag2Offset:{ dx: 8, dy: 9 },     // second flag, relative to first (right + down)
     symbol:    { x: 62,   y: 4,    w: 26,   h: 26 },
@@ -332,13 +332,18 @@ const CONFIG = {
     { id:'immigration',label:'Immigration', src:'main/immigration.png' },
     { id:'medal',    label:'Medal',     src:'main/medal.png' }
   ],
+  // Secondary items reuse the composed main thumbnails (illustration + circle),
+  // shown as a small badge aligned to the main image's bottom-right corner.
   secondaryImages: [
-    { id:'military',     label:'Military',      src:'secondary/military.png' },
-    { id:'church',       label:'Church',        src:'secondary/church.png' },
-    { id:'birth',        label:'Birth',         src:'secondary/birth.png' },
-    { id:'documentation',label:'Documentation', src:'secondary/documentation.png' },
-    { id:'marriage',     label:'Marriage',      src:'secondary/marriage.png' },
-    { id:'death',        label:'Death',         src:'secondary/death.png' }
+    { id:'census',     label:'Census',      src:'main/census.png' },
+    { id:'military',   label:'Military',    src:'main/military.png' },
+    { id:'marriage',   label:'Marriage',    src:'main/marriage.png' },
+    { id:'church',     label:'Church',      src:'main/church.png' },
+    { id:'death',      label:'Death',       src:'main/death.png' },
+    { id:'birth',      label:'Birth',       src:'main/birth.png' },
+    { id:'documents',  label:'Documents',   src:'main/documents.png' },
+    { id:'immigration',label:'Immigration', src:'main/immigration.png' },
+    { id:'medal',      label:'Medal',       src:'main/medal.png' }
   ],
   flags: [
     { id:"af", label:"Afghanistan", src:"flags/af.svg" },
