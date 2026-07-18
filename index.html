@@ -93,7 +93,9 @@ input[type=text]:focus,select:focus{outline:none;border-color:var(--accent);
 #stage .layer img{width:100%;height:100%;object-fit:contain;display:block;pointer-events:none}
 #stage .layer.sel{outline:2px solid var(--ring);outline-offset:1px}
 #stage .layer.clickable{cursor:pointer}
+/* Year label — per Figma: light chip, thin border, soft shadow, square corners */
 .year-tag{display:flex;align-items:center;justify-content:center;border-radius:0;
+  background:#f8f8f8;border:0.5px solid #e4e4e4;box-shadow:1px 1px 1px 0 rgba(0,0,0,.08);
   font:italic 600 8.5px/1 Baskerville,"Baskerville Old Face","Libre Baskerville",Georgia,"Times New Roman",serif;
   letter-spacing:1px;text-indent:1px;color:#111}
 .selbar{min-height:22px;color:var(--muted);font-size:13px;text-align:center}
@@ -144,14 +146,16 @@ input[type=text]:focus,select:focus{outline:none;border-color:var(--accent);
     <div class="group">
       <div class="row"><label class="h" style="margin:0">Attached documentation</label>
         <div class="toggle" id="docsToggle"><div class="knob"></div></div></div>
+      <div id="docsWrap" class="hide" style="margin-top:10px">
+        <div style="color:var(--muted);font-size:12px;margin-bottom:8px">Shown top-left (27×27). Upload the real document — any size is fit into the square.</div>
+        <div class="row" id="docsUploadRow"></div>
+      </div>
     </div>
     <div class="group">
       <div class="row"><label class="h" style="margin:0">Year</label>
         <div class="toggle" id="yearToggle"><div class="knob"></div></div></div>
       <div id="yearWrap" class="hide" style="margin-top:10px">
         <input type="text" id="yearInput" placeholder="e.g. 1930">
-        <div style="margin-top:10px;color:var(--muted);font-size:13px">Tag color</div>
-        <div class="swatches" id="yearColors" style="margin-top:6px"></div>
       </div>
     </div>
     <div class="group">
@@ -282,8 +286,6 @@ const CONFIG = {
 
   PALETTE: { purple:'#E9D5F2', peach:'#F6D9CC', yellow:'#F3DFA6', green:'#CFE6D2',
              blue:'#D5E3F2', rose:'#F2D5DF', teal:'#D5F2F0' },
-  // Pale tints for the year tag (Figma green tag = #eef7e9); kept light per the kit.
-  YEAR_PALETTE: { purple:'#F3ECF9', peach:'#FBEDE4', yellow:'#FBF3D9', green:'#EEF7E9' },
 
   // Per-illustration display footprint in 96x96 space (from the Figma kit). Each main
   // image is scaled to fit this box (aspect preserved) so it sits correctly on the blob.
@@ -296,14 +298,15 @@ const CONFIG = {
   // Default geometry in 96x96 space. Backgrounds/main are centered at render time using their natural size.
   LAYOUT: {
     year:      { x: 7.4,  y: 68.6, w: 28.2, h: 15.0 },
-    secondaryMax: 44,   // secondary badge max edge (96-space); anchored flush to the main's bottom-right corner
+    secondaryMax: 30,   // secondary badge max edge (96-space) — small, per Figma
+    secondaryCenter: { x: 75, y: 75.5 },  // badge center: bottom-right quadrant, inset from the corner (Figma)
     flag:      { x: 64.1, y: 8.6,  w: 21.0, h: 13.3 },
     flag2Offset:{ dx: 8, dy: 9 },     // second flag, relative to first (right + down)
     symbol:    { x: 62,   y: 4,    w: 26,   h: 26 },
-    docs:      { x: 0,    y: 6,    w: 44,   h: 50 }    // attached documents, top-left, behind the main image
+    docs:      { x: 7,    y: 6,    w: 27,   h: 27 }    // attached documentation: 27x27 square, top-left (7px left, 6px top)
   },
-  // The attached-documentation layer reuses the existing "documents" illustration.
-  DOCS_SRC: 'main/documents.png',
+  // Default attached-documentation image: the clean documents illustration (no circle).
+  DOCS_SRC: 'secondary/documents.png',
 
   EXPORT_SIZES: [
     { id:'display', label:'Catalog size — 60×60', w:60,  h:60 },
@@ -606,8 +609,9 @@ const state = {
   main: CONFIG.mainImages[0].id,
   mainUpload: null,
   secondaryOn: false, secondary: CONFIG.secondaryImages[0].id, secUpload: null,
-  docsOn: false,                  // "attached documentation" layer (top-left, behind main)
-  yearOn: false, year: '', yearColor: 'green',
+  docsOn: false,                  // "attached documentation" layer (27x27, top-left, in front of main)
+  docsUpload: null,               // optional uploaded document image (fit into the 27x27 square)
+  yearOn: false, year: '',
   corner: 'none',                 // 'none' | 'flags' | 'symbol'
   flagCount: 1,
   flags: ['us', 'de', 'fr', 'it'],// flag ids (up to 4); each subsequent flag is offset further down-right
@@ -655,6 +659,7 @@ function mainSrcURL(){ return state.mainUpload || assetURL(findById(CONFIG.mainI
 // The background-circle control is only relevant for a custom-uploaded main image.
 function updateBgVisibility(){ const g = document.getElementById('bgGroup'); if (g) g.classList.toggle('hide', !state.mainUpload); }
 function secSrcURL(){ return state.secUpload || assetURL(findById(CONFIG.secondaryImages, state.secondary).src); }
+function docsSrcURL(){ return state.docsUpload || assetURL(CONFIG.DOCS_SRC); }
 function flagSrcURL(i){ return state.flagUploads[i] || assetURL(findById(CONFIG.flags, state.flags[i]).src); }
 
 function getLayers(){
@@ -665,24 +670,25 @@ function getLayers(){
   if (customMain){
     layers.push({ key:'background', kind:'image', src:bgSrcURL(), rect:fitBox(bgSrcURL(), 71, 69) });
   }
-  // Attached documentation: the "documents" illustration, top-left, behind the main image.
-  if (state.docsOn){
-    layers.push({ key:'docs', kind:'image', src:assetURL(CONFIG.DOCS_SRC), rect:{...L.docs} });
-  }
   // Built-in main images are full composed thumbnails (illustration on a circle) and
   // fill the artboard; a custom upload fits a 66px box on the separate circle above.
   const mainRect = customMain ? fitBox(mainSrcURL(), 66, 66) : fitBox(mainSrcURL(), 96, 96);
   layers.push({ key:'main', kind:'image', src:mainSrcURL(), rect:mainRect });
+  // Attached documentation: 27x27 square, top-left, in front of the main image;
+  // the image (default or uploaded) is fit proportionally into the square.
+  if (state.docsOn){
+    layers.push({ key:'docs', kind:'image', src:docsSrcURL(), rect:{...L.docs} });
+  }
   if (state.yearOn)
-    layers.push({ key:'year', kind:'year', text:state.year, color:CONFIG.YEAR_PALETTE[state.yearColor], rect:{...L.year} });
+    layers.push({ key:'year', kind:'year', text:state.year, rect:{...L.year} });
   if (state.secondaryOn){
-    // Secondary is the illustration only, sized by its own aspect and anchored
-    // so its bounding box sits flush in the main image's bottom-right corner.
+    // Secondary is the illustration only, sized by its own aspect (max edge
+    // L.secondaryMax) and centered in the main image's bottom-right quadrant.
     const sec = secSrcURL(), n = natural[sec] || {w:1, h:1}, a = n.w / n.h;
-    const MAX = L.secondaryMax;
+    const MAX = L.secondaryMax, c = L.secondaryCenter;
     let sw = MAX, sh = MAX;
     if (a >= 1) sh = MAX / a; else sw = MAX * a;
-    layers.push({ key:'secondary', kind:'image', src:sec, rect:{ x:96 - sw, y:96 - sh, w:sw, h:sh } });
+    layers.push({ key:'secondary', kind:'image', src:sec, rect:{ x:c.x - sw/2, y:c.y - sh/2, w:sw, h:sh } });
   }
   if (state.corner === 'flags'){
     const fs = state.flagScale, fw = L.flag.w * fs, fh = L.flag.h * fs;
@@ -738,7 +744,7 @@ function render(){
       const im = document.createElement('img'); im.src = layer.src;
       im.style.borderRadius = '50%'; im.style.objectFit = 'cover'; el.appendChild(im);
     } else if (layer.kind === 'year'){
-      el.classList.add('year-tag'); el.style.background = layer.color; el.textContent = layer.text || '';
+      el.classList.add('year-tag'); el.textContent = layer.text || '';
     }
     stage.appendChild(el);
   });
@@ -819,8 +825,10 @@ function buildControls(){
   $('docsToggle').onclick = () => {
     state.docsOn = !state.docsOn;
     $('docsToggle').classList.toggle('on', state.docsOn);
+    $('docsWrap').classList.toggle('hide', !state.docsOn);
     render();
   };
+  buildDocsUploadUI();
 
   // Year toggle + input + colors
   $('yearToggle').onclick = () => {
@@ -830,12 +838,6 @@ function buildControls(){
     render();
   };
   $('yearInput').oninput = e => { state.year = e.target.value; render(); };
-  renderYearColors = function(){
-    buildSwatches($('yearColors'), state.yearColor, id => {
-      state.yearColor = id; renderYearColors(); render();
-    }, CONFIG.YEAR_PALETTE);
-  };
-  renderYearColors();
 
   // Corner segmented control
   $('cornerSeg').querySelectorAll('button').forEach(btn => {
@@ -908,7 +910,6 @@ const FLAG_SCALE_BY_COUNT = { 1:1, 2:1, 3:0.78, 4:0.62 };
 const applyFlagSizeForCount = () => { state.flagScale = FLAG_SCALE_BY_COUNT[state.flagCount] || 1; };
 // Assigned inside buildControls so syncUI() can re-sync them after loading a design.
 let renderBg = () => {};
-let renderYearColors = () => {};
 function buildFlagsUI(){
   const w = $('flagsWrap'); w.innerHTML = '';
   const lbl = t => { const d=document.createElement('div'); d.style.cssText='color:var(--muted);font-size:13px;margin:10px 0 6px'; d.textContent=t; return d; };
@@ -939,10 +940,24 @@ function buildSymbolUI(){
   w.appendChild(uploadTile(url => { state.symbolUpload = url; render(); }));
 }
 
+// Attached-documentation upload: an upload tile (+ a Remove link when a custom
+// document is set). The image is fit into the 27x27 square at render time.
+function buildDocsUploadUI(){
+  const row = document.getElementById('docsUploadRow'); if (!row) return;
+  row.innerHTML = '';
+  row.appendChild(uploadTile(url => { state.docsUpload = url; buildDocsUploadUI(); render(); }));
+  if (state.docsUpload){
+    const rm = document.createElement('a'); rm.textContent = 'Use default';
+    rm.style.cssText = 'color:var(--ring);cursor:pointer;text-decoration:underline;font-size:13px;margin-left:6px';
+    rm.onclick = () => { state.docsUpload = null; buildDocsUploadUI(); render(); };
+    row.appendChild(rm);
+  }
+}
+
 /* ============================ SAVE / LOAD ============================ */
 // A "design" snapshot is the full editable state minus transient view fields.
 const SNAP_KEYS = ['name','background','bgUpload','main','mainUpload','secondaryOn','secondary','secUpload',
-  'docsOn','yearOn','year','yearColor','corner','flagCount','flags','flagFrontIsFirst','flagScale',
+  'docsOn','docsUpload','yearOn','year','corner','flagCount','flags','flagFrontIsFirst','flagScale',
   'flagUploads','symbolUpload','offsets','scales'];
 function snapshot(){ const o={}; SNAP_KEYS.forEach(k => o[k]=JSON.parse(JSON.stringify(state[k]))); return o; }
 function applySnapshot(s){ SNAP_KEYS.forEach(k => { if (k in s) state[k]=JSON.parse(JSON.stringify(s[k])); }); state.selected=null; }
@@ -954,9 +969,9 @@ function syncUI(){
   $('mainSelect').value = state.main;
   $('secToggle').classList.toggle('on', state.secondaryOn); $('secWrap').classList.toggle('hide', !state.secondaryOn);
   $('secSelect').value = state.secondary;
-  $('docsToggle').classList.toggle('on', state.docsOn);
+  $('docsToggle').classList.toggle('on', state.docsOn); $('docsWrap').classList.toggle('hide', !state.docsOn); buildDocsUploadUI();
   $('yearToggle').classList.toggle('on', state.yearOn); $('yearWrap').classList.toggle('hide', !state.yearOn);
-  $('yearInput').value = state.year || ''; renderYearColors();
+  $('yearInput').value = state.year || '';
   document.querySelectorAll('#cornerSeg button').forEach(b => b.classList.toggle('sel', b.dataset.corner===state.corner));
   $('flagsWrap').classList.toggle('hide', state.corner!=='flags');
   $('symbolWrap').classList.toggle('hide', state.corner!=='symbol');
@@ -1173,11 +1188,16 @@ async function composeCanvas(W, H){
         drawContain(ctx, im, r, false);
       }
     } else if (layer.kind === 'year'){
-      ctx.fillStyle = layer.color; ctx.fillRect(r.x, r.y, r.w, r.h);   // square corners per Figma
+      const k = W/B;   // year label per Figma: #f8f8f8 fill, 0.5px #e4e4e4 border, soft shadow, square corners
+      ctx.save();
+      ctx.shadowColor = 'rgba(0,0,0,.08)'; ctx.shadowBlur = 1*k; ctx.shadowOffsetX = 1*k; ctx.shadowOffsetY = 1*k;
+      ctx.fillStyle = '#f8f8f8'; ctx.fillRect(r.x, r.y, r.w, r.h);
+      ctx.restore();
+      ctx.strokeStyle = '#e4e4e4'; ctx.lineWidth = 0.5*k; ctx.strokeRect(r.x, r.y, r.w, r.h);
       ctx.fillStyle = '#111'; ctx.textAlign='center'; ctx.textBaseline='middle';
-      if ('letterSpacing' in ctx) ctx.letterSpacing = (1*(W/B)) + 'px';
-      ctx.font = 'italic 600 ' + (8.5*(W/B)) + 'px Baskerville,"Baskerville Old Face",Georgia,serif';
-      ctx.fillText(layer.text || '', r.x+r.w/2 + (W/B), r.y+r.h/2);
+      if ('letterSpacing' in ctx) ctx.letterSpacing = (1*k) + 'px';
+      ctx.font = 'italic 600 ' + (8.5*k) + 'px Baskerville,"Baskerville Old Face",Georgia,serif';
+      ctx.fillText(layer.text || '', r.x+r.w/2 + k, r.y+r.h/2);
       if ('letterSpacing' in ctx) ctx.letterSpacing = '0px';
     }
   }
