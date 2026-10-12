@@ -452,7 +452,7 @@ function _documents(bx, by, bw, bh){
   const sheet = (b, im, rot, flip, shade) => ({
     src: 'art/manifest.png', x: b.x + im.l*b.w, y: b.y + im.t*b.h, w: im.w*b.w, h: im.h*b.h,
     clip: { rect: [b.x, b.y, b.w, b.h] }, rot, rcx: b.x + b.w/2, rcy: b.y + b.h/2,
-    flipCx: flip ? b.x + b.w/2 : null, shadow: 'doc', shade });
+    flipCx: flip ? b.x + b.w/2 : null, shadow: 'doc', shade, sharpen: .7 });
   return [ sheet(s1, { l: .1547, t: -.0532, w: 1.2157, h: 1.1091 }, -1, true, true),
            sheet(s2, { l: -.078,  t: -.0532, w: 1.161,  h: 1.1091 }, 1, false, false) ];
 }
@@ -830,9 +830,19 @@ const _mip = {};                       // src -> [{w, url}] largest first (level
 const _mipLoading = {};
 let _need = null;                      // while set, buildSVG records images that still need a chain
 const BLANK_PX = 'data:image/gif;base64,R0lGODlhAQABAAAAACw=';
-function mipHref(src, targetW){
+let _exactOn = false;                  // exports only: draw each big image at exactly the size it is shown, resampled with Lanczos-3
+const _exact = {}, _exactReq = new Map(), _orig = {};
+function mipHref(src, targetW, sharpen){
   const tint = src.indexOf('tint:') === 0, m = _mip[src];
   if (!m){ if (_need) _need.add(src); return tint ? BLANK_PX : assetURL(src); }
+  if (_exactOn && !tint && m[0].w < 1e8){
+    const tw = Math.ceil(targetW);
+    if (tw >= 8 && tw < m[0].w * 0.98){
+      const key = 'x|' + tw + '|' + (sharpen || 0) + '|' + src;
+      if (_exact[key]) return _exact[key];
+      if (_need){ _exactReq.set(key, { src, tw, sharpen: sharpen || 0 }); _need.add(key); }
+    }
+  }
   let best = m[0];
   for (const L of m){ if (L.w >= targetW) best = L; else break; }
   return best.url;
@@ -843,6 +853,7 @@ function buildMip(src){
   return _mipLoading[src] = (src.indexOf('tint:') === 0 ? tintedBlob(src.slice(5)) : Promise.resolve(assetURL(src))).then(url => new Promise(res => {
     const im = new Image();
     im.onload = () => {
+      _orig[src] = im;
       const levels = [{ w: im.naturalWidth, url }];
       try {
         let prev = im, w = im.naturalWidth, h = im.naturalHeight;
@@ -891,7 +902,7 @@ const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"
 
 // One art layer (image, optionally clipped / tilted / flipped / shadowed) in the art's own coordinates.
 function artLayerSVG(l, defs, ppu){
-  let g = `<image href="${mipHref(l.src, l.w * ppu)}" x="${l.x}" y="${l.y}" width="${l.w}" height="${l.h}" preserveAspectRatio="none"/>`;
+  let g = `<image href="${mipHref(l.src, l.w * ppu, l.sharpen)}" x="${l.x}" y="${l.y}" width="${l.w}" height="${l.h}" preserveAspectRatio="none"/>`;
   if (l.clip){
     const id = 'c' + (++_uid);
     defs.push(`<clipPath id="${id}">` + (l.clip.rect
@@ -1523,39 +1534,75 @@ function lanczosWeights(srcN, dstN){
   }
   return W;
 }
-function lanczosDown(src, D){
-  const N = src.width, sctx = src.getContext('2d', { willReadFrequently: true }), px = sctx.getImageData(0, 0, N, N).data;
-  const f = new Float32Array(N * N * 4);                                   // premultiplied, so transparent edges don't halo
-  for (let i = 0; i < N * N; i++){
+// Lanczos-3 resize of a canvas/image to dw×dh on premultiplied alpha. `sharpen` > 0 adds a light unsharp mask (scans).
+function lanczosResize(srcEl, dw, dh, sharpen){
+  const sw = srcEl.width || srcEl.naturalWidth, sh = srcEl.height || srcEl.naturalHeight;
+  let sc = srcEl;
+  if (!(srcEl instanceof HTMLCanvasElement)){ sc = document.createElement('canvas'); sc.width = sw; sc.height = sh; sc.getContext('2d', { willReadFrequently: true }).drawImage(srcEl, 0, 0); }
+  const px = sc.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, sw, sh).data;
+  const f = new Float32Array(sw * sh * 4);                                  // premultiplied, so transparent edges don't halo
+  for (let i = 0; i < sw * sh; i++){
     const a = px[i*4+3] / 255;
     f[i*4] = px[i*4] * a; f[i*4+1] = px[i*4+1] * a; f[i*4+2] = px[i*4+2] * a; f[i*4+3] = px[i*4+3];
   }
-  const W = lanczosWeights(N, D), tmp = new Float32Array(D * N * 4);        // horizontal: N rows × D cols
-  for (let y = 0; y < N; y++) for (let x = 0; x < D; x++){
-    const { a, w } = W[x]; let r = 0, g = 0, b = 0, al = 0;
-    for (let k = 0; k < w.length; k++){ const j = (y * N + a + k) * 4, wk = w[k]; r += f[j]*wk; g += f[j+1]*wk; b += f[j+2]*wk; al += f[j+3]*wk; }
-    const o = (y * D + x) * 4; tmp[o] = r; tmp[o+1] = g; tmp[o+2] = b; tmp[o+3] = al;
+  const Wx = lanczosWeights(sw, dw), Wy = lanczosWeights(sh, dh), tmp = new Float32Array(dw * sh * 4);
+  for (let y = 0; y < sh; y++) for (let x = 0; x < dw; x++){                // horizontal: sh rows × dw cols
+    const { a, w } = Wx[x]; let r = 0, g = 0, b = 0, al = 0;
+    for (let k = 0; k < w.length; k++){ const j = (y * sw + a + k) * 4, wk = w[k]; r += f[j]*wk; g += f[j+1]*wk; b += f[j+2]*wk; al += f[j+3]*wk; }
+    const o = (y * dw + x) * 4; tmp[o] = r; tmp[o+1] = g; tmp[o+2] = b; tmp[o+3] = al;
   }
-  const out = new ImageData(D, D), od = out.data;                            // vertical: D × D
-  for (let y = 0; y < D; y++) for (let x = 0; x < D; x++){
-    const { a, w } = W[y]; let r = 0, g = 0, b = 0, al = 0;
-    for (let k = 0; k < w.length; k++){ const j = ((a + k) * D + x) * 4, wk = w[k]; r += tmp[j]*wk; g += tmp[j+1]*wk; b += tmp[j+2]*wk; al += tmp[j+3]*wk; }
-    al = al < 0 ? 0 : al > 255 ? 255 : al;
-    const o = (y * D + x) * 4, u = al > 0 ? 255 / al : 0;                    // un-premultiply
-    od[o]   = Math.max(0, Math.min(255, r * u)); od[o+1] = Math.max(0, Math.min(255, g * u));
-    od[o+2] = Math.max(0, Math.min(255, b * u)); od[o+3] = al;
+  const res = new Float32Array(dw * dh * 4);                                // vertical: dh × dw
+  for (let y = 0; y < dh; y++) for (let x = 0; x < dw; x++){
+    const { a, w } = Wy[y]; let r = 0, g = 0, b = 0, al = 0;
+    for (let k = 0; k < w.length; k++){ const j = ((a + k) * dw + x) * 4, wk = w[k]; r += tmp[j]*wk; g += tmp[j+1]*wk; b += tmp[j+2]*wk; al += tmp[j+3]*wk; }
+    const o = (y * dw + x) * 4; res[o] = r; res[o+1] = g; res[o+2] = b; res[o+3] = al;
   }
-  const c = document.createElement('canvas'); c.width = c.height = D; c.getContext('2d').putImageData(out, 0, 0);
+  const out = new ImageData(dw, dh), od = out.data, clamp = v => v < 0 ? 0 : v > 255 ? 255 : v;
+  for (let y = 0; y < dh; y++) for (let x = 0; x < dw; x++){
+    const o = (y * dw + x) * 4;
+    let r = res[o], g = res[o+1], b = res[o+2];
+    if (sharpen){                                                            // unsharp: v + amount·(v − 3×3 blur)
+      let sr = 0, sg = 0, sb = 0, n = 0;
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++){
+        const yy = y + dy, xx = x + dx; if (yy < 0 || xx < 0 || yy >= dh || xx >= dw) continue;
+        const wt = (dx === 0 && dy === 0) ? 4 : (dx === 0 || dy === 0) ? 2 : 1, j = (yy * dw + xx) * 4;
+        sr += res[j]*wt; sg += res[j+1]*wt; sb += res[j+2]*wt; n += wt;
+      }
+      r += sharpen * (r - sr / n); g += sharpen * (g - sg / n); b += sharpen * (b - sb / n);
+    }
+    const al = clamp(res[o+3]), u = al > 0 ? 255 / al : 0;                   // un-premultiply
+    od[o] = clamp(r * u); od[o+1] = clamp(g * u); od[o+2] = clamp(b * u); od[o+3] = al;
+  }
+  const c = document.createElement('canvas'); c.width = dw; c.height = dh; c.getContext('2d').putImageData(out, 0, 0);
   return c;
+}
+const lanczosDown = (src, D) => lanczosResize(src, D, D, 0);
+function buildExact(key){
+  const q = _exactReq.get(key), im = _orig[q.src];
+  return new Promise(res => {
+    setTimeout(() => {                                                       // yield so the page stays responsive
+      try {
+        const nw = im.naturalWidth, nh = im.naturalHeight, th = Math.max(1, Math.round(q.tw * nh / nw));
+        _exact[key] = lanczosResize(im, q.tw, th, q.sharpen).toDataURL('image/png');
+      } catch (e) { _exact[key] = assetURL(q.src); }
+      res();
+    }, 0);
+  });
 }
 // Draw the current design at layout size S, as an S·f pixel canvas.
 async function composeCanvas(S, f){
   const px = Math.round(S * f), ss = px <= 750 ? 4 : px <= 1000 ? 3 : 2, big = px * ss;
-  _need = new Set(); buildSVG(S, { px: big });                      // dry run: which images need a sharp chain?
-  const need = [..._need]; _need = null;
-  await Promise.all(need.map(buildMip));
-  const hi = await svgToCanvas(await inlineExternalImages(buildSVG(S, { px: big }).svg), big);
-  return lanczosDown(hi, px);
+  _exactOn = true;
+  try {
+    _need = new Set(); buildSVG(S, { px: big });                    // dry run: which images need a sharp chain / an exact-size copy?
+    let need = [..._need]; _need = null;
+    await Promise.all(need.filter(k => k.indexOf('x|') !== 0).map(buildMip));
+    _need = new Set(); buildSVG(S, { px: big });                    // second pass: chains exist now, so the exact-size copies are requested
+    need = [..._need]; _need = null;
+    await Promise.all(need.map(k => k.indexOf('x|') === 0 ? buildExact(k) : buildMip(k)));
+    const hi = await svgToCanvas(await inlineExternalImages(buildSVG(S, { px: big }).svg), big);
+    return lanczosDown(hi, px);
+  } finally { _exactOn = false; _need = null; }
 }
 const canvasBlob = c => new Promise(res => c.toBlob(res, 'image/png'));
 function saveBlob(blob, filename){
