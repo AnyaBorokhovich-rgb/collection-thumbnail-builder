@@ -215,7 +215,7 @@ input[type=text]:focus,select:focus{outline:none;border-color:var(--accent);
   <div class="card" style="padding:22px;width:400px">
     <h3 style="margin:0 0 6px">Download</h3>
     <label class="opt"><input type="radio" name="emode" value="set" checked>
-      <span><b>All sizes</b> — one ZIP<br><small>96, 60 and 54 px, each saved at 8× (768, 480 and 432 px transparent PNGs) — the sharpest version.</small></span></label>
+      <span><b>All sizes</b> — one ZIP<br><small>96×96 saved at 432 px, 60×60 at 270 px and 54×54 at 108 px (transparent PNGs).</small></span></label>
     <label class="opt"><input type="radio" name="emode" value="single">
       <span><b>One size</b></span></label>
     <div id="singleRow" class="hide" style="display:flex;gap:8px;align-items:center;margin:0 0 4px 26px;flex-wrap:wrap">
@@ -248,7 +248,7 @@ window.ASSETS = {"backgrounds/blob-base.png":"data:image/png;base64,iVBORw0KGgoA
   var BASE = 96;          // the design is authored at 96×96; every other size is derived from it
   var GAP96 = 6;          // gap between the circle and the square's sides at 96×96
   var SIZES = [96, 60, 54];     // the three assets that are downloaded (and shown side by side on the stage)
-  var SCALES = [8];             // each is saved at the sharpest resolution (8× → 768 / 504 / 432 px)
+  var SCALE_BY_SIZE = { 96: 4.5, 60: 4.5, 54: 2 };   // saved at 432 / 270 / 108 px
 
   function sanitizeFilename(name) {
     var base = String(name == null ? '' : name).trim().toLowerCase();
@@ -358,9 +358,8 @@ window.ASSETS = {"backgrounds/blob-base.png":"data:image/png;base64,iVBORw0KGgoA
   function exportFiles(name) {
     var base = sanitizeFilename(name).replace(/\.png$/, ''), out = [];
     SIZES.forEach(function (S) {
-      SCALES.forEach(function (f) {
-        out.push({ size: S, scale: f, px: S * f, name: base + '_' + S + 'x' + S + (f === 1 ? '' : '@' + f + 'x') + '.png' });
-      });
+      var f = SCALE_BY_SIZE[S];
+      out.push({ size: S, scale: f, px: Math.round(S * f), name: base + '_' + S + 'x' + S + (f === 1 ? '' : '@' + f + 'x') + '.png' });
     });
     return out;
   }
@@ -407,7 +406,7 @@ window.ASSETS = {"backgrounds/blob-base.png":"data:image/png;base64,iVBORw0KGgoA
   }
 
   return {
-    BASE: BASE, GAP96: GAP96, SIZES: SIZES, SCALES: SCALES,
+    BASE: BASE, GAP96: GAP96, SIZES: SIZES, SCALE_BY_SIZE: SCALE_BY_SIZE,
     sanitizeFilename: sanitizeFilename,
     parseExportSize: parseExportSize,
     scaleRect: scaleRect,
@@ -1501,7 +1500,7 @@ function saveBlob(blob, filename){
 }
 const baseName = () => TB.sanitizeFilename(state.name).replace(/\.png$/, '');
 
-// ZIP with the three assets (96, 60, 54), each at the sharpest scale.
+// ZIP with the three assets: 96 → 432 px, 60 → 270 px, 54 → 108 px.
 async function downloadSet(){
   const out = [];
   for (const f of TB.exportFiles(state.name)){
