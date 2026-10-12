@@ -1505,13 +1505,57 @@ function svgToCanvas(svgText, px){
     im.src = url;
   });
 }
+/* Best-quality export: the design is drawn 2–4× larger than the final size (so every image, flag and edge is
+ * resolved at high resolution) and then reduced with a Lanczos-3 filter on premultiplied alpha — the same
+ * resampling a professional image editor uses — instead of letting the browser shrink everything in one cheap step. */
+function lanczosWeights(srcN, dstN){
+  const sc = srcN / dstN, sup = 3 * sc, W = [];
+  for (let i = 0; i < dstN; i++){
+    const c = (i + .5) * sc, a = Math.max(0, Math.floor(c - sup)), b = Math.min(srcN - 1, Math.ceil(c + sup)), w = new Float32Array(b - a + 1);
+    let sum = 0;
+    for (let x = a; x <= b; x++){
+      const t = (x + .5 - c) / sc, at = Math.abs(t);
+      const v = at < 1e-6 ? 1 : at >= 3 ? 0 : 3 * Math.sin(Math.PI * t) * Math.sin(Math.PI * t / 3) / (Math.PI * Math.PI * t * t);
+      w[x - a] = v; sum += v;
+    }
+    for (let k = 0; k < w.length; k++) w[k] /= sum;
+    W.push({ a, w });
+  }
+  return W;
+}
+function lanczosDown(src, D){
+  const N = src.width, sctx = src.getContext('2d', { willReadFrequently: true }), px = sctx.getImageData(0, 0, N, N).data;
+  const f = new Float32Array(N * N * 4);                                   // premultiplied, so transparent edges don't halo
+  for (let i = 0; i < N * N; i++){
+    const a = px[i*4+3] / 255;
+    f[i*4] = px[i*4] * a; f[i*4+1] = px[i*4+1] * a; f[i*4+2] = px[i*4+2] * a; f[i*4+3] = px[i*4+3];
+  }
+  const W = lanczosWeights(N, D), tmp = new Float32Array(D * N * 4);        // horizontal: N rows × D cols
+  for (let y = 0; y < N; y++) for (let x = 0; x < D; x++){
+    const { a, w } = W[x]; let r = 0, g = 0, b = 0, al = 0;
+    for (let k = 0; k < w.length; k++){ const j = (y * N + a + k) * 4, wk = w[k]; r += f[j]*wk; g += f[j+1]*wk; b += f[j+2]*wk; al += f[j+3]*wk; }
+    const o = (y * D + x) * 4; tmp[o] = r; tmp[o+1] = g; tmp[o+2] = b; tmp[o+3] = al;
+  }
+  const out = new ImageData(D, D), od = out.data;                            // vertical: D × D
+  for (let y = 0; y < D; y++) for (let x = 0; x < D; x++){
+    const { a, w } = W[y]; let r = 0, g = 0, b = 0, al = 0;
+    for (let k = 0; k < w.length; k++){ const j = ((a + k) * D + x) * 4, wk = w[k]; r += tmp[j]*wk; g += tmp[j+1]*wk; b += tmp[j+2]*wk; al += tmp[j+3]*wk; }
+    al = al < 0 ? 0 : al > 255 ? 255 : al;
+    const o = (y * D + x) * 4, u = al > 0 ? 255 / al : 0;                    // un-premultiply
+    od[o]   = Math.max(0, Math.min(255, r * u)); od[o+1] = Math.max(0, Math.min(255, g * u));
+    od[o+2] = Math.max(0, Math.min(255, b * u)); od[o+3] = al;
+  }
+  const c = document.createElement('canvas'); c.width = c.height = D; c.getContext('2d').putImageData(out, 0, 0);
+  return c;
+}
 // Draw the current design at layout size S, as an S·f pixel canvas.
 async function composeCanvas(S, f){
-  const px = Math.round(S * f);
-  _need = new Set(); buildSVG(S, { px });                          // dry run: which images need a sharp chain?
+  const px = Math.round(S * f), ss = px <= 750 ? 4 : px <= 1000 ? 3 : 2, big = px * ss;
+  _need = new Set(); buildSVG(S, { px: big });                      // dry run: which images need a sharp chain?
   const need = [..._need]; _need = null;
   await Promise.all(need.map(buildMip));
-  return svgToCanvas(await inlineExternalImages(buildSVG(S, { px }).svg), px);
+  const hi = await svgToCanvas(await inlineExternalImages(buildSVG(S, { px: big }).svg), big);
+  return lanczosDown(hi, px);
 }
 const canvasBlob = c => new Promise(res => c.toBlob(res, 'image/png'));
 function saveBlob(blob, filename){
