@@ -215,7 +215,7 @@ input[type=text]:focus,select:focus{outline:none;border-color:var(--accent);
   <div class="card" style="padding:22px;width:400px">
     <h3 style="margin:0 0 6px">Download</h3>
     <label class="opt"><input type="radio" name="emode" value="set" checked>
-      <span><b>All sizes</b> — one ZIP<br><small>96×96 saved at 432 px, 60×60 at 270 px and 54×54 at 108 px (transparent PNGs).</small></span></label>
+      <span><b>All sizes</b> — one ZIP<br><small>96×96 saved at 432 px, 60×60 at 270 px and 54×54 at 243 px (transparent PNGs).</small></span></label>
     <label class="opt"><input type="radio" name="emode" value="single">
       <span><b>One size</b></span></label>
     <div id="singleRow" class="hide" style="display:flex;gap:8px;align-items:center;margin:0 0 4px 26px;flex-wrap:wrap">
@@ -248,7 +248,7 @@ window.ASSETS = {"backgrounds/blob-base.png":"data:image/png;base64,iVBORw0KGgoA
   var BASE = 96;          // the design is authored at 96×96; every other size is derived from it
   var GAP96 = 6;          // gap between the circle and the square's sides at 96×96
   var SIZES = [96, 60, 54];     // the three assets that are downloaded (and shown side by side on the stage)
-  var SCALE_BY_SIZE = { 96: 4.5, 60: 4.5, 54: 2 };   // saved at 432 / 270 / 108 px
+  var SCALE_BY_SIZE = { 96: 4.5, 60: 4.5, 54: 4.5 };   // saved at 432 / 270 / 243 px
 
   function sanitizeFilename(name) {
     var base = String(name == null ? '' : name).trim().toLowerCase();
@@ -1613,7 +1613,7 @@ function saveBlob(blob, filename){
 }
 const baseName = () => TB.sanitizeFilename(state.name).replace(/\.png$/, '');
 
-// ZIP with the three assets: 96 → 432 px, 60 → 270 px, 54 → 108 px.
+// ZIP with the three assets: 96 → 432 px, 60 → 270 px, 54 → 243 px.
 async function downloadSet(){
   const out = [];
   for (const f of TB.exportFiles(state.name)){
